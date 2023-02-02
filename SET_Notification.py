@@ -1,161 +1,151 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[ ]:
-
-
+import emoji
 import pandas as pd
-import urllib
-from bs4 import BeautifulSoup
-import requests
-import time
-from datetime import datetime, timedelta
-#from subprocess import call
+from time import sleep
+from datetime import datetime, time
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 from PIL import Image, ImageDraw, ImageFont
-import os, ssl
-if (not os.environ.get('PYTHONHTTPSVERIFY', '') and 
-    getattr(ssl, '_create_unverified_context', None)): 
-    ssl._create_default_https_context = ssl._create_unverified_context
+from line_notify import LineNotify
+import warnings
+warnings.filterwarnings("ignore")
 
-################################################################################
+options = Options()
+options.BinaryLocation = "/usr/bin/chromium-browser"
+options.add_argument("--headless")
+options.add_argument("ignore-certificate-errors")
+options.add_argument("--no-sandbox")
+options.add_argument("--disable-dev-shm-usage")
+options.add_argument("--disable-gpu")
+options.add_argument("--window-size=1920,1080")
+options.add_experimental_option("excludeSwitches", ["enable-logging"])
+driver_path = "/usr/bin/chromedriver"
 
-LineToken = 'Fq4vsJ7rDeDnfaBgucfrbPhn9YHfra2T1rxg4g6sLz4' #Test
-#LineToken = 'T6sEBJfibA86LDqjpZAVH1B9AATnJHoiyAsx7vq33lV' #Price Alerts
 
-def func_LineNotify(Message,LineToken):
-    url  = "https://notify-api.line.me/api/notify"
-    data = ({'message':Message})
-    LINE_HEADERS = {"Authorization":"Bearer " + LineToken}
-    session  = requests.Session()
-    response = session.post(url, headers=LINE_HEADERS, data=data)
-    return response
+mkt_open = time(10, 0, 0)
+mkt_close = time(16, 45, 0)
+now = datetime.now() # local (BKK)
+print(now)
+time_now = now.time()
 
-def func_LineNotifyImage(Message, ImageFile, LineToken):
-    url  = "https://notify-api.line.me/api/notify"
-    data = ({'message': Message})
-    file = {'imageFile': open(ImageFile,'rb')}
-    LINE_HEADERS = {"Authorization":"Bearer " + LineToken}
-    session  = requests.Session()
-    response = session.post(url, headers=LINE_HEADERS, files=file, data=data)
-    return response
+weekday = datetime.weekday(datetime.utcnow())
+if weekday==5:
+    print("It's Saturday")
+    pass
+elif weekday==6:
+    print("It's Sunday")
+    pass
+else:
+    url = "https://www.set.or.th/en/home"
 
-def funcGetPrice(): #from Bloomberg
-    QuotePage = i 
-    Page = urllib.request.urlopen(QuotePage)
-    soup = BeautifulSoup(Page, 'html.parser')
+    count = 0
+    while count < 100:
+        # driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+        driver = webdriver.Chrome(options=options, service=Service(driver_path))
+        driver.get(url)
+        html = driver.page_source
+        # print(html)
+        try:
+            data = pd.read_html(html)
+            driver.close()
+            break
+        except ValueError: # No tables found
+            count += 1
+            driver.close()
+            sleep(1)
 
-    Price       = soup.find('div', attrs={'class': 'price'}).text
-    PriceDateTime = soup.find('div', attrs={'class': 'price-datetime'}).text.strip()
-    PriceDateTime = PriceDateTime[5:]
-    
-    change_status_down = soup.find('div', attrs={'class':'price-container down'})
-    change_status_up   = soup.find('div', attrs={'class':'price-container up'})
+    df = data[0]
+    df = df.set_index("Index")
+    print(df)
 
-    if not change_status_up == None:
-        Status = '+' 
-        change_status = change_status_up
+    SET = "{:,.2f}".format(df.loc["SET", "Last"])
+    SET_change_val = df.loc["SET", "Change"]
+    SET_change_val = "+"+str(df.loc["SET", "Change"]) if SET_change_val > 0 else str(df.loc["SET", "Change"])
+    SET_value = "{:,.0f}".format(df.loc["SET", "Value (M.Baht)"])
+    if SET_value == "-" or time_now >= mkt_close:
+        message_set = "SET = " + str(SET) + "  " + "(market closed)"
     else:
-        Status = '-'
-        change_status = change_status_down  
-    
-    Change_box   = soup.find('div', attrs={'class': 'change-container'})
-    Change       = Change_box.text.strip()
-    Change_val   = Change[:5]
-    Change_pct   = Change[7:].strip()
-    return(Price, PriceDateTime, Status, Change_val, Change_pct)
+        message_set = "SET = " + str(SET) + "  " + str(SET_change_val) + "  " + str(SET_value) + " " + "MB"
 
-while True:
-    try:
-        weekday = datetime.weekday(datetime.utcnow() + timedelta(hours=7)) #Bangkok time
-        if weekday==5:
-            print("It's Saturday")
-            pass
-        elif weekday==6:
-            print("It's Sunday")
-            pass
-        else:
-            QuotePage = 'https://marketdata.set.or.th/mkt/marketsummary.do?language=en&country=US'
-            Page = urllib.request.urlopen(QuotePage)
-            soup = BeautifulSoup(Page, 'html.parser')
-            PriceDateTime = soup.find('div', class_='row text-right table-noborder').text.strip()
-            PriceDateTime = PriceDateTime[14:]
-            #print(PriceDateTime)
-            
-            dfs = pd.read_html(QuotePage)
-            #print(len(dfs))
-            #print(dfs)
-            
-            df = pd.DataFrame(dfs[0])
-            #df = df.apply(pd.to_numeric, errors='ignore')
-            print(df)
-            
-            SET = '{0:,.2f}'.format(df.iloc[0,1])
-            SET_change_val = '{:+.2f}'.format(df.iloc[0,2])
-            SET_change_pct = '{:+.2f}'.format(df.iloc[0,3])
-            Message1 = 'SET = ' + str(SET) + ' ' + str(SET_change_val) + ' ' + str(SET_change_pct) + '%'
-            
-            SET50 = '{0:,.2f}'.format(df.iloc[1,1])
-            SET50_change_val = '{:+.2f}'.format(df.iloc[1,2])
-            SET50_change_pct = '{:+.2f}'.format(df.iloc[1,3])
-            Message2 = 'SET50 = ' + str(SET50) + ' ' + str(SET50_change_val) + ' ' + str(SET50_change_pct) + '%'
-            
-            SET100 = '{0:,.2f}'.format(df.iloc[2,1])
-            SET100_change_val = '{:+.2f}'.format(df.iloc[2,2])
-            SET100_change_pct = '{:+.2f}'.format(df.iloc[2,3])
-            Message3 = 'SET100 = ' + str(SET100) + ' ' + str(SET100_change_val) + ' ' + str(SET100_change_pct) + '%'
-            
-            sSET = '{0:,.2f}'.format(df.iloc[3,1])
-            sSET_change_val = '{:+.2f}'.format(df.iloc[3,2])
-            sSET_change_pct = '{:+.2f}'.format(df.iloc[3,3])
-            Message4 = 'sSET = ' + str(sSET) + ' ' + str(sSET_change_val) + ' ' + str(sSET_change_pct) + '%'
-            
-            SETHD = '{0:,.2f}'.format(df.iloc[4,1])
-            SETHD_change_val = '{:+.2f}'.format(df.iloc[4,2])
-            SETHD_change_pct = '{:+.2f}'.format(df.iloc[4,3])
-            Message5 = 'SETHD = ' + str(SETHD) + ' ' + str(SETHD_change_val) + ' ' + str(SETHD_change_pct) + '%'
-            
-            MAI = '{0:,.2f}'.format(df.iloc[8,1])
-            MAI_change_val = '{:+.2f}'.format(df.iloc[8,2])
-            MAI_change_pct = '{:+.2f}'.format(df.iloc[8,3])
-            Message6 = 'MAI = ' + str(MAI) + ' ' + str(MAI_change_val) + ' ' + str(MAI_change_pct) + '%'
-            
-            Message = PriceDateTime+'\n'+Message1+'\n'+Message2+'\n'+Message3+'\n'+Message4+'\n'+Message5+'\n'+Message6
-            
-            #for Windows
-            #img = Image.new('RGB', (270, 145), color = (73, 109, 137))
-            #font = ImageFont.truetype('C:/Windows/Fonts/Arial.ttf', 15) 
-            #d = ImageDraw.Draw(img)
-            #d.text((10,10), Message, font=font, fill=(255,255,0))
-            #img.save('C:/Users/USER/Dropbox/Python/LINE_Notifications/Commodities/SET_notification.png')
-            #ResponseLine = func_LineNotifyImage('SET Index', 'C:/Users/USER/Dropbox/Python/LINE_Notifications/Commodities/SET_notification.png', LineToken)
-            
-            #for Raspberry Pi
-            text = 'SET Alerts'
-            img = Image.new('RGB', (300, 130), color = (73, 109, 137))
-            font = ImageFont.truetype('/usr/share/fonts/truetype/freefont/FreeSansBold.ttf', 15)
-            d = ImageDraw.Draw(img)
-            d.text((10,10), Message, font=font, fill=(255,255,0))
-            img.save('/home/pi/Desktop/SET_notification.png')
-            ResponseLine = func_LineNotifyImage(text, '/home/pi/Desktop/SET_notification.png', LineToken)
-            
-            #for MAC
-            #img = Image.new('RGB', (270, 145), color = (73, 109, 137))
-            #font = ImageFont.truetype('/usr/share/fonts/truetype/freefont/FreeSansBold.ttf', 15) 
-            #Message = PriceDateTime+'\n'+Message1+'\n'+Message2+'\n'+Message3+'\n'+Message4+'\n'+Message5+'\n'+Message6
-            #d = ImageDraw.Draw(img)
-            #d.text((10,10), Message, font=font, fill=(255,255,0))
-            #img.save('/home/pi/Desktop/SET_notification.png')
-            #ResponseLine = func_LineNotifyImage('SET Index', '/home/pi/Desktop/SET_notification.png', LineToken)
-            
-    except Exception:
-        print('fail')
-        pass
-    finally:
-        time.sleep(1800)
+    SET50 = "{:,.2f}".format(df.loc["SET50", "Last"])
+    SET50_change_val = df.loc["SET50", "Change"]
+    SET50_change_val = "+"+str(df.loc["SET50", "Change"]) if SET50_change_val > 0 else str(df.loc["SET50", "Change"])
+    SET50_value = "{:,.0f}".format(df.loc["SET50", "Value (M.Baht)"])
+    if SET50_value == "-" or time_now >= mkt_close:
+        message_set50 = "SET50 = " + str(SET50) + "  " + "(market closed)"
+    else:
+        message_set50 = "SET50 = " + str(SET50) + "  " + str(SET50_change_val) + "  " + str(SET50_value) + " " + "MB"
 
+    SET100 = "{:,.2f}".format(df.loc["SET100", "Last"])
+    SET100_change_val = df.loc["SET100", "Change"]
+    SET100_change_val = "+"+str(df.loc["SET100", "Change"]) if SET100_change_val > 0 else str(df.loc["SET100", "Change"])
+    SET100_value = "{:,.0f}".format(df.loc["SET100", "Value (M.Baht)"])
+    if SET100_value == "-" or time_now >= mkt_close:
+        message_set100 = "SET100 = " + str(SET100) + "  " + "(market closed)"
+    else:
+        message_set100 = "SET100 = " + str(SET100) + "  " + str(SET100_change_val) + "  " + str(SET100_value) + " " + "MB"
 
-# In[ ]:
+    sSET = "{:,.2f}".format(df.loc["sSET", "Last"])
+    sSET_change_val = df.loc["sSET", "Change"]
+    sSET_change_val = "+"+str(df.loc["sSET", "Change"]) if sSET_change_val > 0 else str(df.loc["sSET", "Change"])
+    sSET_value = "{:,.0f}".format(df.loc["sSET", "Value (M.Baht)"])
+    if sSET_value == "-" or time_now >= mkt_close:
+        message_sset = "sSET = " + str(sSET) + "  " + "(market closed)"
+    else:
+        message_sset = "sSET = " + str(sSET) + "  " + str(sSET_change_val) + "  " + str(sSET_value) + " " + "MB"
 
+    SETCLMV = "{:,.2f}".format(df.loc["SETCLMV", "Last"])
+    SETCLMV_change_val = df.loc["SETCLMV", "Change"]
+    SETCLMV_change_val = "+"+str(df.loc["SETCLMV", "Change"]) if SETCLMV_change_val > 0 else str(df.loc["SETCLMV", "Change"])
+    SETCLMV_value = "{:,.0f}".format(df.loc["SETCLMV", "Value (M.Baht)"])
+    if SETCLMV_value == "-" or time_now >= mkt_close:
+        message_setclmv = "SETCLMV = " + str(SETCLMV) + "  " + "(market closed)"
+    else:
+        message_setclmv = "SETCLMV = " + str(SETCLMV) + "  " + str(SETCLMV_change_val) + "  " + str(SETCLMV_value) + " " + "MB"
 
+    SETHD = "{:,.2f}".format(df.loc["SETHD", "Last"])
+    SETHD_change_val = df.loc["SETHD", "Change"]
+    SETHD_change_val = "+"+str(df.loc["SETHD", "Change"]) if SETHD_change_val > 0 else str(df.loc["SETHD", "Change"])
+    SETHD_value = "{:,.0f}".format(df.loc["SETHD", "Value (M.Baht)"])
+    if SETHD_value == "-" or time_now >= mkt_close:
+        message_sethd = "SETHD = " + str(SETHD) + "   " + "(market closed)"
+    else:
+        message_sethd = "SETHD = " + str(SETHD) + "   " + str(SETHD_change_val) + "   " + str(SETHD_value) + "  " + "MB"
 
+    SETTHSI = "{:,.2f}".format(df.loc["SETTHSI", "Last"])
+    SETTHSI_change_val = df.loc["SETTHSI", "Change"]
+    SETTHSI_change_val = "+"+str(df.loc["SETTHSI", "Change"]) if SETTHSI_change_val > 0 else str(df.loc["SETTHSI", "Change"])
+    SETTHSI_value = "{:,.0f}".format(df.loc["SETTHSI", "Value (M.Baht)"])
+    if SETTHSI_value == "-" or time_now >= mkt_close:
+        message_setthsi = "SETTHSI = " + str(SETTHSI) + "  " + "(market closed)"
+    else:
+        message_setthsi = "SETTHSI = " + str(SETTHSI) + "  " + str(SETTHSI_change_val) + "  " + str(SETTHSI_value) + " " + "MB"
 
+    SETWB = "{:,.2f}".format(df.loc["SETWB", "Last"])
+    SETWB_change_val = df.loc["SETWB", "Change"]
+    SETWB_change_val = "+"+str(df.loc["SETWB", "Change"]) if SETWB_change_val > 0 else str(df.loc["SETWB", "Change"])
+    SETWB_value = "{:,.0f}".format(df.loc["SETWB", "Value (M.Baht)"])
+    if SETWB_value == "-" or time_now >= mkt_close:
+        message_setwb = "SETWB = " + str(SETWB) + "  " + "(market closed)"
+    else:
+        message_setwb = "SETWB = " + str(SETWB) + "  " + str(SETWB_change_val) + "  " + str(SETWB_value) + " " + "MB"
+
+    message_all = message_set+"\n"+message_set50+"\n"+message_set100+"\n"+message_sset+"\n"+message_setclmv+"\n"+message_sethd+"\n"+message_setthsi+"\n"+message_setwb
+    print(message_all)
+
+    # ACCESS_TOKEN = "Fq4vsJ7rDeDnfaBgucfrbPhn9YHfra2T1rxg4g6sLz4" #Test
+    ACCESS_TOKEN = "T6sEBJfibA86LDqjpZAVH1B9AATnJHoiyAsx7vq33lV" #Price Alerts
+    notify = LineNotify(ACCESS_TOKEN)
+
+    # send SET
+    emoji_text = emoji.emojize(":pray: SET Alerts :pray:", language="alias")
+    canvas = Image.new("RGB", (270, 145), color = (73, 109, 137))
+    # font = ImageFont.truetype("C:/Windows/Fonts/Arial.ttf", 13)
+    font = ImageFont.truetype("/usr/share/fonts/truetype/freefont/FreeSansBold.ttf", 13)
+    d = ImageDraw.Draw(canvas)
+    d.text((10,10), message_all, font=font, fill=(255, 255, 0))
+    # image_path = "C:/projects/daily_alerts/temp/set_notification.png"
+    image_path = "/home/pi/Desktop/set_notification.png"
+    canvas.save(image_path)
+    notify.send(emoji_text, image_path=image_path)
